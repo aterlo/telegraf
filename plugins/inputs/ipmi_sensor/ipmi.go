@@ -17,14 +17,19 @@ var (
 )
 
 type Ipmi struct {
-	Path    string
-	Servers []string
+	Path      string
+	Privilege string
+	Servers   []string
+	Timeout   internal.Duration
 }
 
 var sampleConfig = `
   ## optionally specify the path to the ipmitool executable
   # path = "/usr/bin/ipmitool"
-  #
+  ##
+  ## optionally force session privilege level. Can be CALLBACK, USER, OPERATOR, ADMINISTRATOR
+  # privilege = "ADMINISTRATOR"
+  ##
   ## optionally specify one or more servers via a url matching
   ##  [username[:password]@][protocol[(address)]]
   ##  e.g.
@@ -33,6 +38,13 @@ var sampleConfig = `
   ## if no servers are specified, local machine sensor stats will be queried
   ##
   # servers = ["USERID:PASSW0RD@lan(192.168.1.1)"]
+
+  ## Recommended: use metric 'interval' that is a multiple of 'timeout' to avoid
+  ## gaps or overlap in pulled data
+  interval = "30s"
+
+  ## Timeout for the ipmitool command to complete
+  timeout = "20s"
 `
 
 func (m *Ipmi) SampleConfig() string {
@@ -52,7 +64,8 @@ func (m *Ipmi) Gather(acc telegraf.Accumulator) error {
 		for _, server := range m.Servers {
 			err := m.parse(acc, server)
 			if err != nil {
-				return err
+				acc.AddError(err)
+				continue
 			}
 		}
 	} else {
@@ -68,16 +81,14 @@ func (m *Ipmi) Gather(acc telegraf.Accumulator) error {
 func (m *Ipmi) parse(acc telegraf.Accumulator, server string) error {
 	opts := make([]string, 0)
 	hostname := ""
-
 	if server != "" {
-		conn := NewConnection(server)
+		conn := NewConnection(server, m.Privilege)
 		hostname = conn.Hostname
 		opts = conn.options()
 	}
-
 	opts = append(opts, "sdr")
 	cmd := execCommand(m.Path, opts...)
-	out, err := internal.CombinedOutputTimeout(cmd, time.Second*5)
+	out, err := internal.CombinedOutputTimeout(cmd, m.Timeout.Duration)
 	if err != nil {
 		return fmt.Errorf("failed to run command %s: %s - %s", strings.Join(cmd.Args, " "), err, string(out))
 	}
@@ -151,7 +162,9 @@ func init() {
 	if len(path) > 0 {
 		m.Path = path
 	}
+	m.Timeout = internal.Duration{Duration: time.Second * 20}
 	inputs.Add("ipmi_sensor", func() telegraf.Input {
+		m := m
 		return &m
 	})
 }

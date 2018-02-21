@@ -5,7 +5,6 @@ import (
 	"os"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/influxdata/telegraf/plugins/parsers"
 	"github.com/influxdata/telegraf/testutil"
@@ -15,6 +14,10 @@ import (
 )
 
 func TestTailFromBeginning(t *testing.T) {
+	if os.Getenv("CIRCLE_PROJECT_REPONAME") != "" {
+		t.Skip("Skipping CI testing due to race conditions")
+	}
+
 	tmpfile, err := ioutil.TempFile("", "")
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
@@ -31,7 +34,7 @@ func TestTailFromBeginning(t *testing.T) {
 
 	acc := testutil.Accumulator{}
 	require.NoError(t, tt.Start(&acc))
-	require.NoError(t, tt.Gather(&acc))
+	require.NoError(t, acc.GatherError(tt.Gather))
 
 	acc.Wait(1)
 	acc.AssertContainsTaggedFields(t, "cpu",
@@ -44,6 +47,10 @@ func TestTailFromBeginning(t *testing.T) {
 }
 
 func TestTailFromEnd(t *testing.T) {
+	if os.Getenv("CIRCLE_PROJECT_REPONAME") != "" {
+		t.Skip("Skipping CI testing due to race conditions")
+	}
+
 	tmpfile, err := ioutil.TempFile("", "")
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
@@ -59,7 +66,6 @@ func TestTailFromEnd(t *testing.T) {
 
 	acc := testutil.Accumulator{}
 	require.NoError(t, tt.Start(&acc))
-	time.Sleep(time.Millisecond * 200) //TODO remove once https://github.com/hpcloud/tail/pull/114 is merged & added to Godeps
 	for _, tailer := range tt.tailers {
 		for n, err := tailer.Tell(); err == nil && n == 0; n, err = tailer.Tell() {
 			// wait for tailer to jump to end
@@ -69,7 +75,7 @@ func TestTailFromEnd(t *testing.T) {
 
 	_, err = tmpfile.WriteString("cpu,othertag=foo usage_idle=100\n")
 	require.NoError(t, err)
-	require.NoError(t, tt.Gather(&acc))
+	require.NoError(t, acc.GatherError(tt.Gather))
 
 	acc.Wait(1)
 	acc.AssertContainsTaggedFields(t, "cpu",
@@ -100,8 +106,38 @@ func TestTailBadLine(t *testing.T) {
 
 	_, err = tmpfile.WriteString("cpu mytag= foo usage_idle= 100\n")
 	require.NoError(t, err)
-	require.NoError(t, tt.Gather(&acc))
+	require.NoError(t, acc.GatherError(tt.Gather))
 
 	acc.WaitError(1)
 	assert.Contains(t, acc.Errors[0].Error(), "E! Malformed log line")
+}
+
+func TestTailDosLineendings(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+	_, err = tmpfile.WriteString("cpu usage_idle=100\r\ncpu2 usage_idle=200\r\n")
+	require.NoError(t, err)
+
+	tt := NewTail()
+	tt.FromBeginning = true
+	tt.Files = []string{tmpfile.Name()}
+	p, _ := parsers.NewInfluxParser()
+	tt.SetParser(p)
+	defer tt.Stop()
+	defer tmpfile.Close()
+
+	acc := testutil.Accumulator{}
+	require.NoError(t, tt.Start(&acc))
+	require.NoError(t, acc.GatherError(tt.Gather))
+
+	acc.Wait(2)
+	acc.AssertContainsFields(t, "cpu",
+		map[string]interface{}{
+			"usage_idle": float64(100),
+		})
+	acc.AssertContainsFields(t, "cpu2",
+		map[string]interface{}{
+			"usage_idle": float64(200),
+		})
 }
