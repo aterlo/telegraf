@@ -2,6 +2,7 @@ package cumulative_converter
 
 import (
 	"log"
+	"reflect"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
@@ -68,7 +69,8 @@ func (p *CumulativeConverter) Apply(in ...telegraf.Metric) []telegraf.Metric {
 		newFields := make(map[string]interface{})
 
 		for k, v := range m.Fields() {
-			if fv, ok := convert(v); ok {
+			fv, ok := convert(v)
+			if ok {
 				pv := s.fields[k]
 				if fv < pv {
 					// Counter reset, discard this
@@ -80,6 +82,8 @@ func (p *CumulativeConverter) Apply(in ...telegraf.Metric) []telegraf.Metric {
 				}
 
 				s.fields[k] = fv
+			} else {
+				log.Printf("Failed to convert %s %s", k, v)
 			}
 		}
 
@@ -100,8 +104,10 @@ func convert(in interface{}) (float64, bool) {
 		return v, true
 	case int64:
 		return float64(v), true
+	case uint64:
+		return float64(v), true
 	default:
-		log.Println("Unhandled metric field type")
+		log.Println("Unhandled metric field type:", reflect.TypeOf(in))
 		return 0, false
 	}
 }
