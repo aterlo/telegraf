@@ -2,7 +2,6 @@ package json
 
 import (
 	"fmt"
-	"log"
 	"testing"
 	"time"
 
@@ -472,7 +471,7 @@ func TestJSONParseNestedArray(t *testing.T) {
 	}
 
 	metrics, err := parser.Parse([]byte(testString))
-	log.Printf("m[0] name: %v, tags: %v, fields: %v", metrics[0].Name(), metrics[0].Tags(), metrics[0].Fields())
+	require.Len(t, metrics, 1)
 	require.NoError(t, err)
 	require.Equal(t, len(parser.TagKeys), len(metrics[0].Tags()))
 }
@@ -599,6 +598,23 @@ func TestTimeParser(t *testing.T) {
 	require.Equal(t, false, metrics[0].Time() == metrics[1].Time())
 }
 
+func TestTimeParserWithTimezone(t *testing.T) {
+	testString := `{
+		"time": "04 Jan 06 15:04"
+	}`
+
+	parser := JSONParser{
+		MetricName:     "json_test",
+		JSONTimeKey:    "time",
+		JSONTimeFormat: "02 Jan 06 15:04",
+		JSONTimezone:   "America/New_York",
+	}
+	metrics, err := parser.Parse([]byte(testString))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(metrics))
+	require.EqualValues(t, int64(1136405040000000000), metrics[0].Time().UnixNano())
+}
+
 func TestUnixTimeParser(t *testing.T) {
 	testString := `[
 		{
@@ -702,7 +718,6 @@ func TestTimeErrors(t *testing.T) {
 	}
 
 	metrics, err = parser.Parse([]byte(testString2))
-	log.Printf("err: %v", err)
 	require.Error(t, err)
 	require.Equal(t, 0, len(metrics))
 	require.Equal(t, fmt.Errorf("JSON time key could not be found"), err)
@@ -750,4 +765,49 @@ func TestTimeKeyDelete(t *testing.T) {
 	}
 
 	testutil.RequireMetricsEqual(t, expected, metrics)
+}
+
+func TestParseEmptyArray(t *testing.T) {
+	data := `[]`
+
+	parser := &JSONParser{}
+
+	actual, err := parser.Parse([]byte(data))
+	require.NoError(t, err)
+
+	expected := []telegraf.Metric{}
+	testutil.RequireMetricsEqual(t, expected, actual)
+}
+
+func TestParseSimpleArray(t *testing.T) {
+	data := `[{"answer": 42}]`
+
+	parser := JSONParser{
+		MetricName: "json",
+	}
+
+	actual, err := parser.Parse([]byte(data))
+	require.NoError(t, err)
+
+	expected := []telegraf.Metric{
+		testutil.MustMetric(
+			"json",
+			map[string]string{},
+			map[string]interface{}{
+				"answer": 42.0,
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime())
+}
+
+func TestParseArrayWithWrongType(t *testing.T) {
+	data := `[{"answer": 42}, 123]`
+
+	parser := JSONParser{}
+
+	_, err := parser.Parse([]byte(data))
+	require.Error(t, err)
 }

@@ -11,6 +11,8 @@ This plugin does not require a plugin on jenkins and it makes use of Jenkins API
   url = "http://my-jenkins-instance:8080"
   #  username = "admin"
   #  password = "admin"
+  # username = "admin"
+  # password = "admin"
 
   ## Set response_timeout
   response_timeout = "5s"
@@ -25,12 +27,23 @@ This plugin does not require a plugin on jenkins and it makes use of Jenkins API
   ## Optional Max Job Build Age filter
   ## Default 1 hour, ignore builds older than max_build_age
   #  max_build_age = "1h"
+  ## Optional TLS Config
+  # tls_ca = "/etc/telegraf/ca.pem"
+  # tls_cert = "/etc/telegraf/cert.pem"
+  # tls_key = "/etc/telegraf/key.pem"
+  ## Use SSL but skip chain & host verification
+  # insecure_skip_verify = false
+
+  ## Optional Max Job Build Age filter
+  ## Default 1 hour, ignore builds older than max_build_age
+  # max_build_age = "1h"
 
   ## Optional Sub Job Depth filter
   ## Jenkins can have unlimited layer of sub jobs
   ## This config will limit the layers of pulling, default value 0 means
   ## unlimited pulling until no more sub jobs
   #  max_subjob_depth = 0
+  # max_subjob_depth = 0
 
   ## Optional Sub Job Per Layer
   ## In workflow-multibranch-plugin, each branch will be created as a sub job.
@@ -47,6 +60,17 @@ This plugin does not require a plugin on jenkins and it makes use of Jenkins API
   ## Worker pool for jenkins plugin only
   ## Empty this field will use default value 5
   #  max_connections = 5
+  # max_subjob_per_layer = 10
+
+  ## Jobs to exclude from gathering
+  # job_exclude = [ "job1", "job2/subjob1/subjob2", "job3/*"]
+
+  ## Nodes to exclude from gathering
+  # node_exclude = [ "node1", "node2" ]
+
+  ## Worker pool for jenkins plugin only
+  ## Empty this field will use default value 5
+  # max_connections = 5
 ```
 
 ### Metrics:
@@ -93,4 +117,5 @@ $ ./telegraf --config telegraf.conf --input-filter jenkins --test
 jenkins_node,arch=Linux\ (amd64),disk_path=/var/jenkins_home,temp_path=/tmp,host=myhost,node_name=master swap_total=4294963200,memory_available=586711040,memory_total=6089498624,status=online,response_time=1000i,disk_available=152392036352,temp_available=152392036352,swap_available=3503263744 1516031535000000000
 jenkins_job,host=myhost,name=JOB1,parents=apps/br1,result=SUCCESS duration=2831i,result_code=0i 1516026630000000000
 jenkins_job,host=myhost,name=JOB2,parents=apps/br2,result=SUCCESS duration=2285i,result_code=0i 1516027230000000000
+```
 ```

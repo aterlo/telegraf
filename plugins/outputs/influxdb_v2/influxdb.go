@@ -38,6 +38,10 @@ var sampleConfig = `
   ## Destination bucket to write into.
   bucket = ""
 
+  ## The value of this tag will be used to determine the bucket.  If this
+  ## tag is not set the 'bucket' option is used as the default.
+  # bucket_tag = ""
+
   ## Timeout for HTTP messages.
   # timeout = "5s"
 
@@ -70,6 +74,7 @@ type Client interface {
 	Write(context.Context, []telegraf.Metric) error
 
 	URL() string // for logging
+	Close()
 }
 
 type InfluxDB struct {
@@ -77,6 +82,7 @@ type InfluxDB struct {
 	Token           string            `toml:"token"`
 	Organization    string            `toml:"organization"`
 	Bucket          string            `toml:"bucket"`
+	BucketTag       string            `toml:"bucket_tag"`
 	Timeout         internal.Duration `toml:"timeout"`
 	HTTPHeaders     map[string]string `toml:"http_headers"`
 	HTTPProxy       string            `toml:"http_proxy"`
@@ -132,6 +138,9 @@ func (i *InfluxDB) Connect() error {
 }
 
 func (i *InfluxDB) Close() error {
+	for _, client := range i.clients {
+		client.Close()
+	}
 	return nil
 }
 
@@ -157,10 +166,10 @@ func (i *InfluxDB) Write(metrics []telegraf.Metric) error {
 			return nil
 		}
 
-		log.Printf("E! [outputs.influxdb] when writing to [%s]: %v", client.URL(), err)
+		log.Printf("E! [outputs.influxdb_v2] when writing to [%s]: %v", client.URL(), err)
 	}
 
-	return errors.New("could not write any address")
+	return err
 }
 
 func (i *InfluxDB) getHTTPClient(ctx context.Context, url *url.URL, proxy *url.URL) (Client, error) {
@@ -174,6 +183,7 @@ func (i *InfluxDB) getHTTPClient(ctx context.Context, url *url.URL, proxy *url.U
 		Token:           i.Token,
 		Organization:    i.Organization,
 		Bucket:          i.Bucket,
+		BucketTag:       i.BucketTag,
 		Timeout:         i.Timeout.Duration,
 		Headers:         i.HTTPHeaders,
 		Proxy:           proxy,

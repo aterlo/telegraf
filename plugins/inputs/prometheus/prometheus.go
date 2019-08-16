@@ -31,7 +31,8 @@ type Prometheus struct {
 	KubeConfig string
 
 	// Bearer Token authorization file path
-	BearerToken string `toml:"bearer_token"`
+	BearerToken       string `toml:"bearer_token"`
+	BearerTokenString string `toml:"bearer_token_string"`
 
 	ResponseTimeout internal.Duration `toml:"response_timeout"`
 
@@ -40,9 +41,10 @@ type Prometheus struct {
 	client *http.Client
 
 	// Should we scrape Kubernetes services for prometheus annotations
-	MonitorPods    bool `toml:"monitor_kubernetes_pods"`
+	MonitorPods    bool   `toml:"monitor_kubernetes_pods"`
+	PodNamespace   string `toml:"monitor_kubernetes_pods_namespace"`
 	lock           sync.Mutex
-	kubernetesPods []URLAndAddress
+	kubernetesPods map[string]URLAndAddress
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 }
@@ -64,9 +66,14 @@ var sampleConfig = `
   ## - prometheus.io/path: If the metrics path is not /metrics, define it with this annotation.
   ## - prometheus.io/port: If port is not 9102 use this annotation
   # monitor_kubernetes_pods = true
+  ## Restricts Kubernetes monitoring to a single namespace
+  ##   ex: monitor_kubernetes_pods_namespace = "default"
+  # monitor_kubernetes_pods_namespace = ""
 
-  ## Use bearer token for authorization
-  # bearer_token = /path/to/bearer/token
+  ## Use bearer token for authorization. ('bearer_token' takes priority)
+  # bearer_token = "/path/to/bearer/token"
+  ## OR
+  # bearer_token_string = "abc_123"
 
   ## Specify timeout duration for slower prometheus clients (default is 3s)
   # response_timeout = "3s"
@@ -115,21 +122,23 @@ type URLAndAddress struct {
 	Tags        map[string]string
 }
 
-func (p *Prometheus) GetAllURLs() ([]URLAndAddress, error) {
-	allURLs := make([]URLAndAddress, 0)
+func (p *Prometheus) GetAllURLs() (map[string]URLAndAddress, error) {
+	allURLs := make(map[string]URLAndAddress, 0)
 	for _, u := range p.URLs {
 		URL, err := url.Parse(u)
 		if err != nil {
 			log.Printf("prometheus: Could not parse %s, skipping it. Error: %s", u, err.Error())
 			continue
 		}
-
-		allURLs = append(allURLs, URLAndAddress{URL: URL, OriginalURL: URL})
+		allURLs[URL.String()] = URLAndAddress{URL: URL, OriginalURL: URL}
 	}
+
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	// loop through all pods scraped via the prometheus annotation on the pods
-	allURLs = append(allURLs, p.kubernetesPods...)
+	for k, v := range p.kubernetesPods {
+		allURLs[k] = v
+	}
 
 	for _, service := range p.KubernetesServices {
 		URL, err := url.Parse(service)
@@ -144,7 +153,11 @@ func (p *Prometheus) GetAllURLs() ([]URLAndAddress, error) {
 		}
 		for _, resolved := range resolvedAddresses {
 			serviceURL := p.AddressToURL(URL, resolved)
-			allURLs = append(allURLs, URLAndAddress{URL: serviceURL, Address: resolved, OriginalURL: URL})
+			allURLs[serviceURL.String()] = URLAndAddress{
+				URL:         serviceURL,
+				Address:     resolved,
+				OriginalURL: URL,
+			}
 		}
 	}
 	return allURLs, nil
@@ -230,13 +243,14 @@ func (p *Prometheus) gatherURL(u URLAndAddress, acc telegraf.Accumulator) error 
 
 	req.Header.Add("Accept", acceptHeader)
 
-	var token []byte
 	if p.BearerToken != "" {
-		token, err = ioutil.ReadFile(p.BearerToken)
+		token, err := ioutil.ReadFile(p.BearerToken)
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+string(token))
+	} else if p.BearerTokenString != "" {
+		req.Header.Set("Authorization", "Bearer "+p.BearerTokenString)
 	}
 
 	var resp *http.Response
@@ -305,12 +319,17 @@ func (p *Prometheus) Start(a telegraf.Accumulator) error {
 }
 
 func (p *Prometheus) Stop() {
-	p.cancel()
+	if p.MonitorPods {
+		p.cancel()
+	}
 	p.wg.Wait()
 }
 
 func init() {
 	inputs.Add("prometheus", func() telegraf.Input {
-		return &Prometheus{ResponseTimeout: internal.Duration{Duration: time.Second * 3}}
+		return &Prometheus{
+			ResponseTimeout: internal.Duration{Duration: time.Second * 3},
+			kubernetesPods:  map[string]URLAndAddress{},
+		}
 	})
 }

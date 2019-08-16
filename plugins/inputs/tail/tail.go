@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/influxdata/tail"
-
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal/globpath"
 	"github.com/influxdata/telegraf/plugins/inputs"
@@ -111,7 +110,7 @@ func (t *Tail) tailNewFiles(fromBeginning bool) error {
 		if err != nil {
 			t.acc.AddError(fmt.Errorf("E! Error Glob %s failed to compile, %s", filepath, err))
 		}
-		for file := range g.Match() {
+		for _, file := range g.Match() {
 			if _, ok := t.tailers[file]; ok {
 				// we're already tailing this file
 				continue
@@ -213,9 +212,6 @@ func (t *Tail) Stop() {
 		}
 	}
 
-	for _, tailer := range t.tailers {
-		tailer.Cleanup()
-	}
 	t.wg.Wait()
 }
 
