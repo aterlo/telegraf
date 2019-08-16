@@ -10,9 +10,11 @@ import (
 	_ "net/http/pprof" // Comment this line to disable pprof endpoint.
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/influxdata/telegraf/agent"
 	"github.com/influxdata/telegraf/internal"
@@ -71,6 +73,23 @@ var (
 
 var stop chan struct{}
 
+// getLastModifiedTime resolves
+func getLastModifiedTime(file string) (time.Time, error) {
+	var modTime time.Time
+	path, err := filepath.EvalSymlinks(*fConfig)
+	if err != nil {
+		return modTime, err
+	}
+
+	fInfo, err := os.Stat(path)
+	if err != nil {
+		return modTime, err
+	}
+	modTime = fInfo.ModTime()
+
+	return modTime, nil
+}
+
 func reloadLoop(
 	stop chan struct{},
 	inputFilters []string,
@@ -88,21 +107,48 @@ func reloadLoop(
 		signals := make(chan os.Signal)
 		signal.Notify(signals, os.Interrupt, syscall.SIGHUP,
 			syscall.SIGTERM, syscall.SIGINT)
+
+		ticker := time.NewTicker(time.Minute * 5)
+
+		fileLastModifiedTime, err := getLastModifiedTime(*fConfig)
+		if err != nil {
+			log.Fatalln(err)
+		}
+
 		go func() {
-			select {
-			case sig := <-signals:
-				if sig == syscall.SIGHUP {
-					log.Printf("I! Reloading Telegraf config")
-					<-reload
-					reload <- true
+		WatcherLoop:
+			for {
+				select {
+				case sig := <-signals:
+					if sig == syscall.SIGHUP {
+						log.Println("Received HUP signal. Reloading Telegraf config")
+						<-reload
+						reload <- true
+					}
+					cancel()
+					break WatcherLoop
+				case <-stop:
+					cancel()
+					break WatcherLoop
+				case <-ticker.C:
+					modTime, err := getLastModifiedTime(*fConfig)
+					log.Println(modTime)
+					if err == nil {
+						if modTime != fileLastModifiedTime {
+							log.Println("Config file changed. Reloading Telegraf config")
+
+							<-reload
+							reload <- true
+							cancel()
+
+							break WatcherLoop
+						}
+					}
 				}
-				cancel()
-			case <-stop:
-				cancel()
 			}
 		}()
 
-		err := runAgent(ctx, inputFilters, outputFilters)
+		err = runAgent(ctx, inputFilters, outputFilters)
 		if err != nil && err != context.Canceled {
 			log.Fatalf("E! [telegraf] Error running agent: %v", err)
 		}
