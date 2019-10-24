@@ -136,14 +136,16 @@ func reloadLoop(
 					break WatcherLoop
 				case <-ticker.C:
 					modTime, err := getLastModifiedTime(*fConfig)
-					log.Println(modTime)
+					log.Println("config file last modified on: ", modTime)
 					if err == nil {
-						if modTime != fileLastModifiedTime {
+						// Reload the config if the config was modified more than a 30 seconds ago
+						if modTime.After(fileLastModifiedTime) && time.Now().Sub(modTime) > (time.Second*30) {
 							log.Println("Config file changed. Reloading Telegraf config")
+
+							cancel()
 
 							<-reload
 							reload <- true
-							cancel()
 
 							break WatcherLoop
 						}
