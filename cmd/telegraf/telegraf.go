@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gorilla/pat"
 	"github.com/influxdata/telegraf/agent"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/internal/config"
@@ -28,6 +29,7 @@ import (
 	_ "github.com/influxdata/telegraf/plugins/outputs/all"
 	_ "github.com/influxdata/telegraf/plugins/processors/all"
 	"github.com/kardianos/service"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var fDebug = flag.Bool("debug", false,
@@ -135,6 +137,9 @@ func reloadLoop(
 					cancel()
 					break WatcherLoop
 				case <-ticker.C:
+					// Increment counter
+					configCheckCountMetric.Inc()
+
 					modTime, err := getLastModifiedTime(*fConfig)
 					log.Println("config file last modified on: ", modTime)
 					if err == nil {
@@ -340,6 +345,11 @@ func main() {
 
 	if *pprofAddr != "" {
 		go func() {
+			myMux := pat.New()
+
+			myMux.Handle("/metrics", promhttp.Handler()).Methods("GET")
+			myMux.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
+
 			pprofHostPort := *pprofAddr
 			parts := strings.Split(pprofHostPort, ":")
 			if len(parts) == 2 && parts[0] == "" {
@@ -349,7 +359,7 @@ func main() {
 
 			log.Printf("I! Starting pprof HTTP server at: %s", pprofHostPort)
 
-			if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
+			if err := http.ListenAndServe(*pprofAddr, myMux); err != nil {
 				log.Fatal("E! " + err.Error())
 			}
 		}()
