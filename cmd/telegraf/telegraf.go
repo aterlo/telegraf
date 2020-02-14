@@ -137,14 +137,11 @@ func reloadLoop(
 					cancel()
 					break WatcherLoop
 				case <-ticker.C:
-					// Increment counter
-					configCheckCountMetric.Inc()
-
 					modTime, err := getLastModifiedTime(*fConfig)
 					log.Println("config file last modified on: ", modTime)
 					if err == nil {
 						// Reload the config if the config was modified more than a 30 seconds ago
-						if modTime.After(fileLastModifiedTime) && time.Now().Sub(modTime) > (time.Second*30) {
+						if modTime.After(fileLastModifiedTime) && time.Since(modTime) > (time.Second*30) {
 							log.Println("Config file changed. Reloading Telegraf config")
 
 							cancel()
@@ -173,6 +170,7 @@ func runAgent(ctx context.Context,
 	// Setup default logging. This may need to change after reading the config
 	// file, but we can configure it to use our logger implementation now.
 	log.Printf("I! Starting Telegraf %s", version)
+	log.Printf("I! fConfig %s", *fConfig)
 
 	// If no other options are specified, load the config file and run.
 	c := config.NewConfig()
@@ -182,6 +180,9 @@ func runAgent(ctx context.Context,
 	if err != nil {
 		return err
 	}
+
+	log.Println("Input Filters: ", c.InputFilters)
+	log.Println("Output Filters: ", c.OutputFilters)
 
 	if *fConfigDirectory != "" {
 		err = c.LoadDirectory(*fConfigDirectory)
