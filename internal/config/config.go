@@ -671,7 +671,7 @@ func (c *Config) LoadConfig(path string) error {
 	if err != nil {
 		return fmt.Errorf("Error loading %s, %s", path, err)
 	}
-	log.Println("Config File: ", string(data))
+	fmt.Println("Config File: ", string(data))
 
 	tbl, err := parseConfig(data)
 	if err != nil {
