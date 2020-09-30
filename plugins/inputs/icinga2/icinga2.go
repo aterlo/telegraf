@@ -3,14 +3,13 @@ package icinga2
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
-	"github.com/influxdata/telegraf/internal/tls"
+	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -21,6 +20,8 @@ type Icinga2 struct {
 	Password        string
 	ResponseTimeout internal.Duration
 	tls.ClientConfig
+
+	Log telegraf.Logger
 
 	client *http.Client
 }
@@ -42,6 +43,7 @@ type Attribute struct {
 	DisplayName  string  `json:"display_name"`
 	Name         string  `json:"name"`
 	State        float64 `json:"state"`
+	HostName     string  `json:"host_name"`
 }
 
 var levels = []string{"ok", "warning", "critical", "unknown"}
@@ -49,10 +51,10 @@ var levels = []string{"ok", "warning", "critical", "unknown"}
 type ObjectType string
 
 var sampleConfig = `
-  ## Required Icinga2 server address (default: "https://localhost:5665")
+  ## Required Icinga2 server address
   # server = "https://localhost:5665"
-
-  ## Required Icinga2 object type ("services" or "hosts, default "services")
+  
+  ## Required Icinga2 object type ("services" or "hosts")
   # object_type = "services"
 
   ## Credentials for basic HTTP authentication
@@ -80,25 +82,34 @@ func (i *Icinga2) SampleConfig() string {
 
 func (i *Icinga2) GatherStatus(acc telegraf.Accumulator, checks []Object) {
 	for _, check := range checks {
-		fields := make(map[string]interface{})
-		tags := make(map[string]string)
-
 		url, err := url.Parse(i.Server)
 		if err != nil {
-			log.Fatal(err)
+			i.Log.Error(err.Error())
+			continue
 		}
 
 		state := int64(check.Attrs.State)
 
-		fields["name"] = check.Attrs.Name
-		fields["state_code"] = state
+		fields := map[string]interface{}{
+			"name":       check.Attrs.Name,
+			"state_code": state,
+		}
 
-		tags["display_name"] = check.Attrs.DisplayName
-		tags["check_command"] = check.Attrs.CheckCommand
-		tags["state"] = levels[state]
-		tags["source"] = url.Hostname()
-		tags["scheme"] = url.Scheme
-		tags["port"] = url.Port()
+		// source is dependent on 'services' or 'hosts' check
+		source := check.Attrs.Name
+		if i.ObjectType == "services" {
+			source = check.Attrs.HostName
+		}
+
+		tags := map[string]string{
+			"display_name":  check.Attrs.DisplayName,
+			"check_command": check.Attrs.CheckCommand,
+			"source":        source,
+			"state":         levels[state],
+			"server":        url.Hostname(),
+			"scheme":        url.Scheme,
+			"port":          url.Port(),
+		}
 
 		acc.AddFields(fmt.Sprintf("icinga2_%s", i.ObjectType), fields, tags)
 	}
@@ -133,7 +144,15 @@ func (i *Icinga2) Gather(acc telegraf.Accumulator) error {
 		i.client = client
 	}
 
-	url := fmt.Sprintf("%s/v1/objects/%s?attrs=name&attrs=display_name&attrs=state&attrs=check_command", i.Server, i.ObjectType)
+	requestUrl := "%s/v1/objects/%s?attrs=name&attrs=display_name&attrs=state&attrs=check_command"
+
+	// Note: attrs=host_name is only valid for 'services' requests, using check.Attrs.HostName for the host
+	//       'hosts' requests will need to use attrs=name only, using check.Attrs.Name for the host
+	if i.ObjectType == "services" {
+		requestUrl += "&attrs=host_name"
+	}
+
+	url := fmt.Sprintf(requestUrl, i.Server, i.ObjectType)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -165,8 +184,9 @@ func (i *Icinga2) Gather(acc telegraf.Accumulator) error {
 func init() {
 	inputs.Add("icinga2", func() telegraf.Input {
 		return &Icinga2{
-			Server:     "https://localhost:5665",
-			ObjectType: "services",
+			Server:          "https://localhost:5665",
+			ObjectType:      "services",
+			ResponseTimeout: internal.Duration{Duration: time.Second * 5},
 		}
 	})
 }
